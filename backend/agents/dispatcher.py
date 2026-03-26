@@ -173,12 +173,30 @@ class DispatcherAgent:
                              f"Source map failed: {exc}")
             raise
 
-        # ── Шаг 3: Сбор данных (параллельно) ─────────────────────────────
+        # ── Шаг 3: Сбор данных (двухфазный) ──────────────────────────────
+        # Фаза 1: website + duckduckgo — быстрые, обогащают контекст
         await self._emit(session_id, "agent_started", "collectors",
-                         f"Starting {len(plan.collectors)} collectors")
-        raw_results = await self._run_collectors(
-            plan.collectors, plan.context, session_id
+                         "Phase 1: website + search (context enrichment)")
+        phase1_results = await self._run_collectors(
+            ["website", "duckduckgo"], plan.context, session_id
         )
+        # Обогащаем контекст: LinkedIn URL компании + LinkedIn URL ЛПР
+        plan.context = self._enrich_context_from_phase1(plan.context, phase1_results)
+        # Если нашли LinkedIn ЛПР — добавляем linkedin_person в план
+        if plan.context.get("linkedin_lpr_url") and "linkedin_person" not in plan.collectors:
+            plan.collectors.append("linkedin_person")
+            await self._emit(session_id, "agent_started", "source_map",
+                             f"LPR found: {plan.context['linkedin_lpr_url']}")
+
+        # Фаза 2: все остальные коллекторы с обогащённым контекстом
+        phase2_names = [c for c in plan.collectors if c not in ("website", "duckduckgo")]
+        await self._emit(session_id, "agent_started", "collectors",
+                         f"Phase 2: {len(phase2_names)} collectors")
+        phase2_results = await self._run_collectors(
+            phase2_names, plan.context, session_id
+        )
+
+        raw_results = phase1_results + phase2_results
         usable = sum(1 for r in raw_results if r.is_usable())
         await self._emit(session_id, "agent_completed", "collectors",
                          f"Collected: {usable}/{len(raw_results)} usable",
@@ -347,6 +365,53 @@ class DispatcherAgent:
                 "passport_id": str(passport.id),
                 "outreach_error": str(exc),
             }
+
+    # ── Обогащение контекста из фазы 1 ───────────────────────────────────
+
+    def _enrich_context_from_phase1(self, context: dict, results: list) -> dict:
+        """
+        Извлекает из website + duckduckgo результатов:
+        - linkedin_company_url (из footer/header сайта)
+        - linkedin_lpr_url (из DDG поиска по "CEO site:linkedin.com/in")
+        и добавляет их в контекст для использования в фазе 2.
+        """
+        import re
+        for r in results:
+            if not r.is_usable():
+                continue
+
+            if r.source_name == "website":
+                # LinkedIn страница компании найдена на сайте
+                li_url = r.data.get("linkedin_company_url")
+                if li_url and not context.get("linkedin_company_url"):
+                    context["linkedin_company_url"] = li_url
+                    logger.info(f"Found LinkedIn company URL on website: {li_url}")
+
+            if r.source_name == "duckduckgo":
+                # Ищем LinkedIn профиль ЛПР в результатах lpr_linkedin
+                if not context.get("linkedin_lpr_url"):
+                    lpr_hits = r.data.get("lpr_linkedin", [])
+                    for hit in lpr_hits:
+                        url = hit.get("url", "")
+                        # Только прямые профили /in/ (не /company/, не /pub/)
+                        if re.search(r"linkedin\.com/in/[a-z0-9\-]+", url, re.I):
+                            clean_url = url.split("?")[0].rstrip("/")
+                            context["linkedin_lpr_url"] = clean_url
+                            logger.info(f"Found LPR LinkedIn URL via DDG: {clean_url}")
+                            break
+
+                # Дополнительно: ищем LPR в key_people результатах
+                if not context.get("linkedin_lpr_url"):
+                    key_people_hits = r.data.get("key_people", [])
+                    for hit in key_people_hits:
+                        url = hit.get("url", "")
+                        if re.search(r"linkedin\.com/in/[a-z0-9\-]+", url, re.I):
+                            clean_url = url.split("?")[0].rstrip("/")
+                            context["linkedin_lpr_url"] = clean_url
+                            logger.info(f"Found LPR LinkedIn URL in key_people: {clean_url}")
+                            break
+
+        return context
 
     # ── Запуск коллекторов ───────────────────────────────────────────────
 

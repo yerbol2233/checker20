@@ -24,11 +24,12 @@ logger = logging.getLogger(__name__)
 class AnalysisResult:
     pains: list[dict]             # Блок 3
     readiness: dict               # Блок 7
-    lpr_overheating: dict         # Блок 10 (если есть ЛПР)
+    lpr_overheating: dict         # Блок 10 (если есть ЛПР через linkedin_person)
     triggers: dict                # Блок 9
     industry_context: dict        # Блок 11
     sales_model_signals: dict     # Блок 2
     competitors: list[dict]       # Блок 6
+    lpr_from_public: dict = field(default_factory=dict)  # Блок 10 fallback (без linkedin_person)
     raw_analysis: dict = field(default_factory=dict)
 
 
@@ -93,12 +94,20 @@ class AnalystAgent:
         industry_context = await industry_task
         sales_model_signals = await sales_model_task
 
-        # ЛПР анализ (только если есть данные)
+        # ЛПР анализ
         lpr_overheating = {}
-        if has_lpr and results.get("linkedin_person"):
-            lpr_data = results["linkedin_person"].data
+        lpr_from_public = {}
+
+        lpr_result = results.get("linkedin_person")
+        if lpr_result and lpr_result.is_usable():
+            # Полные данные из linkedin_person
             lpr_overheating = await self._calculate_lpr_overheating(
-                lpr_data, session_id
+                lpr_result.data, session_id
+            )
+        else:
+            # Fallback: строим профиль ЛПР из публичных данных (DDG + Apollo)
+            lpr_from_public = await self._construct_lpr_from_public_data(
+                block_data, company_name, session_id
             )
 
         return AnalysisResult(
@@ -109,6 +118,7 @@ class AnalystAgent:
             industry_context=industry_context,
             sales_model_signals=sales_model_signals,
             competitors=competitors,
+            lpr_from_public=lpr_from_public,
         )
 
     def _aggregate_by_block(self, results: dict) -> dict:
@@ -123,17 +133,25 @@ class AnalystAgent:
             return merged
 
         return {
-            "block1": merge("website", "linkedin_company", "crunchbase", "similarweb", "twitter", "youtube"),
-            "block2": merge("website", "linkedin_company", "indeed", "builtwith", "glassdoor", "duckduckgo"),
-            "block3": merge("glassdoor", "g2", "capterra", "trustpilot", "yelp", "reddit", "indeed", "duckduckgo"),
-            "block4": merge("linkedin_company", "duckduckgo", "linkedin_person"),
-            "block5": merge("duckduckgo", "linkedin_company", "twitter", "youtube"),
-            "block6": merge("g2", "capterra", "duckduckgo", "crunchbase"),
-            "block7": merge("website", "linkedin_company", "indeed", "builtwith", "duckduckgo"),
-            "block8": merge("google_reviews", "trustpilot", "g2", "capterra", "yelp", "glassdoor"),
+            # apollo добавлен в block1 (employees, revenue, HQ) и block4 (key people)
+            "block1": merge("website", "linkedin_company", "crunchbase", "apollo",
+                            "similarweb", "twitter", "youtube"),
+            "block2": merge("website", "linkedin_company", "indeed", "builtwith",
+                            "glassdoor", "duckduckgo"),
+            "block3": merge("glassdoor", "g2", "capterra", "trustpilot", "yelp",
+                            "reddit", "indeed", "duckduckgo"),
+            # apollo даёт key_people + contacts; duckduckgo__key_people — плоский массив
+            "block4": merge("linkedin_company", "apollo", "duckduckgo", "linkedin_person"),
+            # duckduckgo__news, duckduckgo__jobs теперь плоские (flattened collector)
+            "block5": merge("duckduckgo", "linkedin_company", "twitter", "youtube", "website"),
+            "block6": merge("g2", "capterra", "duckduckgo", "crunchbase", "website"),
+            "block7": merge("website", "linkedin_company", "indeed", "builtwith",
+                            "crunchbase", "duckduckgo"),
+            "block8": merge("google_reviews", "trustpilot", "g2", "capterra",
+                            "yelp", "glassdoor"),
             "block9": merge("crunchbase", "linkedin_company", "duckduckgo"),
-            "block10": merge("linkedin_person", "twitter", "duckduckgo"),
-            "block11": merge("duckduckgo", "g2", "similarweb"),
+            "block10": merge("linkedin_person", "apollo", "duckduckgo"),
+            "block11": merge("duckduckgo", "g2", "similarweb", "website"),
         }
 
     async def _analyze_pains(
@@ -169,7 +187,7 @@ class AnalystAgent:
             result = await router.complete_json(
                 task_type=TaskType.PAIN_ANALYSIS,
                 prompt=prompt,
-                max_tokens=1500,
+                max_tokens=2000,
                 session_id=session_id,
                 agent_name="analyst_pains",
             )
@@ -313,7 +331,7 @@ class AnalystAgent:
                     f'JSON: {{"positive": [{{"trigger": "...", "source": "...", "strength": "high/medium/low"}}], '
                     f'"negative": [...], "verdict": "..."}}'
                 ),
-                max_tokens=600,
+                max_tokens=1200,
                 session_id=session_id,
                 agent_name="analyst_triggers",
             )
@@ -328,8 +346,6 @@ class AnalystAgent:
     ) -> list[dict]:
         """Конкурентная среда (Блок 6)."""
         comp_data = block_data.get("block6", {})
-        if not comp_data:
-            return []
 
         router = self._get_router()
         try:
@@ -337,15 +353,22 @@ class AnalystAgent:
                 task_type=TaskType.DATA_VALIDATION,
                 prompt=(
                     f"Company: {company_name}\n"
-                    f"Data: {str(comp_data)[:1500]}\n\n"
-                    f"Extract competitors mentioned. "
-                    f'JSON array: [{{"name": "...", "source": "...", "relationship": "direct/indirect"}}]'
+                    f"Scraped data (may be empty): {str(comp_data)[:2000]}\n\n"
+                    f"Extract competitors. Look for competitors in:\n"
+                    f"- duckduckgo__competitors: search snippets about alternatives\n"
+                    f"- g2/capterra data: comparison pages\n"
+                    f"- website text: 'vs', 'compared to', 'alternative'\n\n"
+                    f"If scraped data is insufficient, use your general knowledge about "
+                    f"the {company_name} industry — mark those with 'knowledge_base' source.\n"
+                    f'JSON array: [{{"name": "...", "source": "scraped|knowledge_base", '
+                    f'"relationship": "direct|indirect", "note": "..."}}]\n'
+                    f"Return at least 3 competitors (mix scraped + knowledge if needed)."
                 ),
-                max_tokens=400,
+                max_tokens=1200,
                 session_id=session_id,
                 agent_name="analyst_competitors",
             )
-            if isinstance(result, list):
+            if isinstance(result, list) and result:
                 return result
         except Exception as exc:
             logger.debug(f"Competitors extraction failed: {exc}")
@@ -356,8 +379,6 @@ class AnalystAgent:
     ) -> dict:
         """Контекст отрасли (Блок 11)."""
         ind_data = block_data.get("block11", {})
-        if not ind_data:
-            return {"trends": [], "summary": "Данные не найдены"}
 
         router = self._get_router()
         try:
@@ -365,11 +386,17 @@ class AnalystAgent:
                 task_type=TaskType.NICHE_CLASSIFICATION,
                 prompt=(
                     f"Company: {company_name}\n"
-                    f"Data: {str(ind_data)[:1500]}\n\n"
-                    f"Summarize industry context relevant for B2B sales outreach. "
-                    f'JSON: {{"industry": "...", "trends": ["..."], "summary": "...", "market_size": "..."}}'
+                    f"Scraped data: {str(ind_data)[:2000]}\n\n"
+                    f"Summarize industry context for B2B sales outreach.\n"
+                    f"IMPORTANT RULES:\n"
+                    f"- For 'market_size': if not in scraped data, use your knowledge "
+                    f"and mark with prefix '⚠️ Гипотеза: '\n"
+                    f"- For 'trends': combine scraped signals + your knowledge (mark knowledge as hypothesis)\n"
+                    f"- Always provide non-empty values — never return null for market_size or trends\n"
+                    f'JSON: {{"industry": "...", "trends": ["..."], "summary": "...", '
+                    f'"market_size": "...", "growth_signals": ["..."]}}'
                 ),
-                max_tokens=400,
+                max_tokens=1200,
                 session_id=session_id,
                 agent_name="analyst_industry",
             )
@@ -377,6 +404,58 @@ class AnalystAgent:
         except Exception as exc:
             logger.debug(f"Industry analysis failed: {exc}")
         return {"trends": [], "summary": "Данные не найдены"}
+
+    async def _construct_lpr_from_public_data(
+        self, block_data: dict, company_name: str, session_id: Optional[str]
+    ) -> dict:
+        """
+        Строит профиль ЛПР из публичных данных когда linkedin_person недоступен.
+        Использует duckduckgo__key_people, apollo__keywords/contacts, linkedin_company данные.
+        """
+        b4_data = block_data.get("block4", {})
+        b10_data = block_data.get("block10", {})
+
+        if not b4_data and not b10_data:
+            return {}
+
+        combined = {**b10_data, **b4_data}
+        if not any(combined.values()):
+            return {}
+
+        router = self._get_router()
+        try:
+            result = await router.complete_json(
+                task_type=TaskType.LPR_SCORING,
+                prompt=(
+                    f"Company: {company_name}\n"
+                    f"Available public data about company people:\n"
+                    f"{str(combined)[:3000]}\n\n"
+                    f"Extract the most likely Decision Maker (CEO, founder, VP Sales, director).\n"
+                    f"Look for names in:\n"
+                    f"- duckduckgo__key_people: search snippets mentioning leadership\n"
+                    f"- apollo__keywords: may contain executive names\n"
+                    f"- linkedin_company__specialties or description\n\n"
+                    f"Rules:\n"
+                    f"- If name found in data: use it with source reference\n"
+                    f"- If only role found (CEO but no name): fill name as 'Данные не найдены'\n"
+                    f"- profile_type: infer from available signals\n"
+                    f"- best_outreach_angle: based on company context\n"
+                    f'JSON: {{"name": "...", "title": "...", "company": "{company_name}", '
+                    f'"background": "...", "linkedin_activity": "неизвестна", '
+                    f'"profile_type": "quiet_pro|creator|networker|newcomer", '
+                    f'"overheating_score": 0, '
+                    f'"best_outreach_angle": "...", '
+                    f'"data_source": "public_search|not_found"}}'
+                ),
+                max_tokens=800,
+                session_id=session_id,
+                agent_name="analyst_lpr_public",
+            )
+            if isinstance(result, dict) and result.get("name"):
+                return result
+        except Exception as exc:
+            logger.debug(f"LPR from public data failed: {exc}")
+        return {}
 
     async def _analyze_sales_model(
         self, block_data: dict, company_name: str, session_id: Optional[str]
@@ -398,7 +477,7 @@ class AnalystAgent:
                     f'"has_crm": true/false, "uses_phone_sales": true/false, '
                     f'"estimated_team_size": "...", "sales_tools": ["..."]}}'
                 ),
-                max_tokens=400,
+                max_tokens=1000,
                 session_id=session_id,
                 agent_name="analyst_sales_model",
             )

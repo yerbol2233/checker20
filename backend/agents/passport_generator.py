@@ -194,13 +194,16 @@ class PassportGeneratorAgent:
                     f"Компания: {company_name}\n"
                     f"Блок паспорта: {block_num}. {block_name}\n"
                     f"Поля для заполнения: {block_fields}\n\n"
-                    f"Данные из источников:\n{str(block_data)[:2500]}\n\n"
-                    f"Заполни поля блока на русском языке. "
-                    f"Факты — с источником в скобках. "
-                    f"Гипотезы — помечай '⚠️ Гипотеза: ...'. "
-                    f"Нет данных — пиши null или 'Данные не найдены'."
+                    f"Данные из источников:\n{str(block_data)[:4000]}\n\n"
+                    f"Правила заполнения:\n"
+                    f"- Факты — с источником в скобках (LinkedIn, Apollo, DuckDuckGo, etc.)\n"
+                    f"- Гипотезы — помечай '⚠️ Гипотеза: ...'\n"
+                    f"- Если данных нет в источниках, используй общие знания об отрасли "
+                    f"и компании, помечая это как гипотезу\n"
+                    f"- Никогда не оставляй поле null если можно дать хотя бы гипотезу\n"
+                    f"- Нет данных ВООБЩЕ — пиши 'Данные не найдены'"
                 ),
-                max_tokens=800,
+                max_tokens=1800,
                 session_id=session_id,
                 agent_name=f"passport_block{block_num}",
             )
@@ -225,8 +228,19 @@ class PassportGeneratorAgent:
         if block_num == 10:
             lpr = results.get("linkedin_person")
             if lpr and lpr.is_usable():
+                # Полные данные из LinkedIn Person коллектора
                 return {**lpr.data, "overheating": analysis.lpr_overheating}
-            return {}
+            if analysis.lpr_from_public:
+                # Fallback: профиль ЛПР из публичных данных (DDG + Apollo)
+                return {**analysis.lpr_from_public, "overheating": analysis.lpr_overheating}
+            # Последний fallback: возвращаем данные из block4/block10 напрямую
+            # чтобы LLM мог извлечь хоть что-то
+            block4_data = {}
+            for src in ["linkedin_company", "apollo", "duckduckgo"]:
+                r = results.get(src)
+                if r and r.is_usable():
+                    block4_data[src] = r.data
+            return block4_data if block4_data else {}
         if block_num == 11:
             return analysis.industry_context
         if block_num == 6:
@@ -238,9 +252,9 @@ class PassportGeneratorAgent:
 
         # Для остальных блоков — агрегируем из sources
         BLOCK_SOURCES = {
-            1: ["website", "linkedin_company", "crunchbase", "similarweb", "twitter"],
-            4: ["linkedin_company", "duckduckgo"],
-            5: ["duckduckgo", "linkedin_company", "twitter", "youtube"],
+            1: ["website", "linkedin_company", "crunchbase", "apollo", "similarweb", "twitter"],
+            4: ["linkedin_company", "apollo", "duckduckgo"],
+            5: ["duckduckgo", "linkedin_company", "twitter", "youtube", "website"],
             8: ["google_reviews", "trustpilot", "g2", "capterra", "yelp", "glassdoor"],
         }
         sources_for_block = BLOCK_SOURCES.get(block_num, [])
@@ -254,16 +268,16 @@ class PassportGeneratorAgent:
     def _get_block_sources(self, block_num: int, results: dict) -> list[dict]:
         """Список источников с ссылками для блока."""
         BLOCK_SOURCES = {
-            1: ["website", "linkedin_company", "crunchbase", "similarweb"],
+            1: ["website", "linkedin_company", "crunchbase", "apollo", "similarweb"],
             2: ["website", "linkedin_company", "indeed", "builtwith"],
             3: ["glassdoor", "g2", "capterra", "trustpilot", "reddit"],
-            4: ["linkedin_company", "duckduckgo"],
+            4: ["linkedin_company", "apollo", "duckduckgo"],
             5: ["duckduckgo", "linkedin_company", "twitter"],
             6: ["g2", "capterra", "duckduckgo"],
-            7: ["crunchbase", "indeed", "builtwith"],
+            7: ["crunchbase", "apollo", "indeed", "builtwith"],
             8: ["google_reviews", "trustpilot", "g2", "glassdoor"],
             9: ["crunchbase", "duckduckgo"],
-            10: ["linkedin_person"],
+            10: ["linkedin_person", "apollo", "duckduckgo"],
             11: ["duckduckgo", "similarweb"],
         }
         src_names = BLOCK_SOURCES.get(block_num, [])

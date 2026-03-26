@@ -25,6 +25,19 @@ class Settings(BaseSettings):
     # ScrapeOps
     scrapeops_api_key: str = ""
     scrapeops_url: str = "https://proxy.scrapeops.io/v1/"
+    # ScrapeOps HTTP proxy mode (для DDGS и других библиотек поддерживающих стандартный прокси)
+    # Формат: http://API_KEY:@proxy.scrapeops.io:5353
+    @property
+    def scrapeops_http_proxy(self) -> str:
+        if self.scrapeops_api_key:
+            return f"http://{self.scrapeops_api_key}:@proxy.scrapeops.io:5353"
+        return ""
+
+    # Apollo
+    apollo_api_key: str = ""
+
+    # Serper.dev (Google Search API)
+    serper_api_key: str = ""
 
     # App
     debug: bool = False

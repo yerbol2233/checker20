@@ -102,14 +102,35 @@ class WebsiteCollector(BaseCollector):
         text = re.sub(r"\s+", " ", soup.get_text(separator=" ")).strip()
         text = text[:MAX_TEXT_LENGTH]
 
-        # Ключевые ссылки
+        # Ключевые ссылки + LinkedIn/Twitter URLs из всех тегов <a>
         links = {}
+        linkedin_company_url = ""
+        twitter_url = ""
+
         for a in soup.find_all("a", href=True):
-            href = a["href"].lower()
-            full = urljoin(base_url, a["href"])
+            href = a["href"]
+            href_lower = href.lower()
+            full = urljoin(base_url, href)
+
             for page in IMPORTANT_PAGES:
-                if page in href and page not in links:
+                if page in href_lower and page not in links:
                     links[page] = full
+
+            # Ищем LinkedIn страницу компании
+            if not linkedin_company_url and "linkedin.com/company/" in href_lower:
+                clean = href.split("?")[0].rstrip("/")
+                if clean.startswith("http"):
+                    linkedin_company_url = clean
+                else:
+                    linkedin_company_url = "https://www.linkedin.com/company/" + \
+                        href_lower.split("linkedin.com/company/")[-1].split("/")[0]
+
+            # Ищем Twitter/X профиль компании
+            if not twitter_url and (
+                "twitter.com/" in href_lower or "x.com/" in href_lower
+            ):
+                if "/intent/" not in href_lower and "/share" not in href_lower:
+                    twitter_url = href.split("?")[0].rstrip("/")
 
         # Наличие признаков
         html_lower = html.lower()
@@ -120,7 +141,7 @@ class WebsiteCollector(BaseCollector):
         has_pricing = bool(links.get("/pricing") or links.get("/price"))
         has_careers = bool(links.get("/careers") or links.get("/jobs"))
 
-        return {
+        result = {
             "title": title,
             "meta_description": description,
             "meta_keywords": keywords,
@@ -130,6 +151,11 @@ class WebsiteCollector(BaseCollector):
             "has_pricing_page": has_pricing,
             "has_careers_page": has_careers,
         }
+        if linkedin_company_url:
+            result["linkedin_company_url"] = linkedin_company_url
+        if twitter_url:
+            result["twitter_url"] = twitter_url
+        return result
 
     async def _collect_sub_pages(self, base_url: str) -> dict:
         """Пробует скачать /about и /pricing для дополнительного контекста."""

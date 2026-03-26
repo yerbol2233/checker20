@@ -51,15 +51,17 @@ class ApolloCollector(BaseCollector):
         )
 
         try:
-            # Попытка через публичный API (без ключа — может вернуть ограниченные данные)
+            from config import settings
+            headers: dict = {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-cache",
+            }
+            # Используем API ключ если есть (значительно больше данных)
+            if settings.apollo_api_key:
+                headers["x-api-key"] = settings.apollo_api_key
+
             async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(
-                    api_url,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Cache-Control": "no-cache",
-                    },
-                )
+                resp = await client.get(api_url, headers=headers)
                 if resp.status_code == 200:
                     raw = resp.json()
                     org = raw.get("organization", {})
@@ -70,7 +72,7 @@ class ApolloCollector(BaseCollector):
                             data=self._normalize_api(org),
                             retrieved_at=datetime.now(timezone.utc),
                             url_used=api_url,
-                            confidence=0.85,
+                            confidence=0.9 if settings.apollo_api_key else 0.85,
                         )
         except Exception as exc:
             self.logger.debug(f"Apollo API failed: {exc}")

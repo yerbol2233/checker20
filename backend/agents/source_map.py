@@ -90,12 +90,16 @@ class SourceMapAgent:
         # Базовый набор
         collectors = list(BASE_COLLECTORS)
 
-        # Условные коллекторы
+        # Расширенный набор коллекторов для 100% покрытия
+        # Если нет LinkedIn ЛПР, всё равно добавляем 'duckduckgo' (уже есть в базовых),
+        # но мы можем добавить специализированные задачи.
+        
+        # Добавляем 'sec_edgar' только если публичная (уже есть логика)
         for name, condition in CONDITIONAL_COLLECTORS.items():
             if condition(context) and name not in collectors:
                 collectors.append(name)
 
-        # Классифицируем нишу (опционально — не критично)
+        # Классифицируем нишу
         niche = ""
         try:
             niche = await self._classify_niche(
@@ -103,13 +107,9 @@ class SourceMapAgent:
                 domain=domain,
                 session_id=session_id,
             )
+            context["niche"] = niche
         except Exception as exc:
             logger.debug(f"Niche classification skipped: {exc}")
-
-        logger.info(
-            f"CollectionPlan built: {len(collectors)} collectors, "
-            f"domain={domain}, niche={niche or 'unknown'}"
-        )
 
         return CollectionPlan(
             collectors=collectors,

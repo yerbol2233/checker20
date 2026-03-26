@@ -13,6 +13,7 @@ import json
 import logging
 import re
 from typing import Optional
+from json_repair import repair_json
 
 from llm.base import (
     LLMProvider, LLMResponse, LLMUsage, TaskType,
@@ -178,17 +179,23 @@ class LLMRouter:
             content = re.sub(r"\n?```$", "", content)
 
         try:
+            # Сначала пробуем обычный json
             return json.loads(content)
-        except json.JSONDecodeError as exc:
-            logger.warning(f"JSON parse failed for {agent_name}: {exc}. Raw: {content[:200]}")
-            # Пробуем найти JSON в тексте
-            json_match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", content)
-            if json_match:
-                try:
-                    return json.loads(json_match.group(1))
-                except json.JSONDecodeError:
-                    pass
-            return {"raw": content, "parse_error": str(exc)}
+        except json.JSONDecodeError:
+            # Если не вышло — пробуем json_repair
+            try:
+                repaired = repair_json(content)
+                return json.loads(repaired)
+            except Exception as exc:
+                logger.warning(f"JSON repair failed for {agent_name}: {exc}. Raw: {content[:200]}")
+                # Последний шанс: поиск JSON через regex
+                json_match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", content)
+                if json_match:
+                    try:
+                        return json.loads(repair_json(json_match.group(1)))
+                    except Exception:
+                        pass
+                return {"raw": content, "parse_error": str(exc)}
 
 
 # Фабрика синглтона
