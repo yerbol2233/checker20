@@ -10,7 +10,19 @@ class Settings(BaseSettings):
     )
 
     # Database
+    # Railway передаёт DATABASE_URL в формате postgresql://...
+    # Мы автоматически конвертируем в postgresql+asyncpg://...
     database_url: str = "postgresql+asyncpg://cia_user:cia_password@localhost:5432/cia_db"
+
+    @property
+    def async_database_url(self) -> str:
+        url = self.database_url
+        if url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        elif url.startswith("postgres://"):
+            # Heroku/Railway иногда используют postgres:// (устаревший алиас)
+            url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+        return url
 
     # Redis / Celery
     redis_url: str = "redis://localhost:6379/0"
@@ -38,6 +50,13 @@ class Settings(BaseSettings):
 
     # Serper.dev (Google Search API)
     serper_api_key: str = ""
+
+    # CORS — через запятую: https://your-app.vercel.app,http://localhost:3000
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://frontend:3000"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     # App
     debug: bool = False

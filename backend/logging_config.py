@@ -44,14 +44,27 @@ def setup_logging() -> None:
     root.addHandler(console)
 
     # ── Файловые логгеры ─────────────────────────────────────────────────
+    # На Railway/Vercel диск может быть эфемерным или read-only.
+    # Если не удаётся создать файл — пишем только в stdout (уже настроен выше).
     file_loggers = {
         "cia.app": "app.log",
         "cia.scraping": "scraping.log",
         "cia.llm": "llm.log",
     }
 
-    for logger_name, filename in file_loggers.items():
-        _setup_file_logger(logger_name, LOGS_DIR / filename, level)
+    try:
+        LOGS_DIR.mkdir(exist_ok=True)
+        # Проверяем что можем писать
+        test_file = LOGS_DIR / ".write_test"
+        test_file.touch()
+        test_file.unlink()
+        for logger_name, filename in file_loggers.items():
+            _setup_file_logger(logger_name, LOGS_DIR / filename, level)
+    except OSError:
+        # Только stdout — нормально для cloud-деплоя
+        logging.getLogger("cia.app").warning(
+            "File logging unavailable (read-only filesystem). Using stdout only."
+        )
 
     # Тихие библиотеки
     for noisy in ("httpx", "httpcore", "celery", "kombu", "urllib3", "asyncio"):

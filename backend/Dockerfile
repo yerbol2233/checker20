@@ -22,4 +22,5 @@ RUN mkdir -p /app/logs
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Railway задаёт PORT динамически; локально по умолчанию 8000
+CMD sh -c "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"
