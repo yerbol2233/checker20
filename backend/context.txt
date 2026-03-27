@@ -1,0 +1,33 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.84
+           Sonnet 4.6 · Claude Pro
+  ▘▘ ▝▝    ~/myapps/checker_2.0/cia-system/backend
+
+✻ Conversation compacted (ctrl+o for history)
+
+
+❯ /compact                                                                      
+  ⎿  Compacted (ctrl+o to see full summary)
+  ⎿  Read Dockerfile (26 lines)
+  ⎿  Read ../docker-compose.prod.yml (139 lines)
+  ⎿  Read ../frontend/Dockerfile (26 lines)
+  ⎿  Read ../frontend/next.config.js (10 lines)
+  ⎿  Read ../nginx/nginx.conf (60 lines)
+  ⎿  Skills restored (init)
+
+❯ /context                                                                      
+  ⎿  Context Usage
+     ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛀ ⛁   claude-sonnet-4-6 · 25k/200k tokens (12%)
+     ⛁ ⛁ ⛁ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ 
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   Estimated usage by category
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ System prompt: 6.1k tokens (3.1%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ System tools: 8.3k tokens (4.1%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ Memory files: 2k tokens (1.0%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ Skills: 476 tokens (0.2%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ Messages: 7.9k tokens (3.9%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ Compact buffer: 3k tokens (1.5%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛁ ⛀   ⛶ Free space: 172k (86.1%)
+
+     Memory files · /memory
+     └ ~/myapps/checker_2.0/CLAUDE.md: 2k tokens
+
+     Skills · /skills
